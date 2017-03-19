@@ -1,0 +1,508 @@
+﻿/*
+ This is the CGA grammar definition for ANTLR.
+
+ NOTE: This parser depends on proper preprocessing, i.e. definition tag
+ insertion and comment removal.
+
+ Keywords have to be kept in sync in various places in the CGA compiler
+ as well as in the native ruler.
+*/
+grammar CGA;
+
+options {
+	language 	= CSharp3;
+    	TokenLabelType	= CommonToken;
+	k            	= 3;
+	backtrack    	= true;
+	memoize      	= true;
+	output       	= AST;
+  	ASTLabelType 	= CommonTree;
+}
+
+
+@lexer::namespace{CGATranslator}
+@parser::namespace{CGATranslator}
+
+public cga
+	: versionStatement? (( importStatement | style | annotation | functionDefintion | ruleDefinition ) )* EOF
+	;
+
+
+// MISC
+signature
+	: SignatureIdentifier^ ( '('! ( Identifier (','! Identifier)* )? ')'! )?
+	;
+
+identifier
+    : Identifier^
+    ;
+
+
+versionStatement
+    : VERSION^ StringLiteral
+    ;
+
+importStatement
+    : IMPORT^ ( annotation? Identifier ( '('! ( Identifier (','! Identifier)* )? ')'! )?  ':'! StringLiteral ( POPEN ( attrOverwrite (','! attrOverwrite)* )? PCLOSE )?)+
+    ;
+
+style
+    : STYLE^ Identifier ( EXTENDS! Identifier )?
+    ;
+
+annotation
+    : Annotation^ annotationArguments?
+    ;
+
+// FUNCTIONS
+
+functionDefintion
+	: signature EQUALS functionBody -> ^(EQUALS signature functionBody)
+	;
+
+attrOverwrite
+    : identifier                     -> ^(EQUALS identifier)
+    | identifier EQUALS functionBody -> ^(EQUALS identifier functionBody)
+    ;
+
+
+
+elseToken : ELSE;
+
+functionBody
+    : expression
+    ;
+
+// RULES
+
+public ruleDefinition
+	: signature RULE_DEFINITION ruleBody -> ^(RULE_DEFINITION signature ruleBody)
+	;
+
+ruleCase
+    : ( p+=ProbabilityLiteral COLON b+=ruleBody )+ p+=ELSE COLON b+=ruleBody
+        -> {$p==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CPROB ^(CPROB $p+) ^(CBODY $b+))
+    | (CASE e+=booleanExpression  COLON b+=ruleBody )+ e+=elseToken COLON b+=ruleBody
+        -> {$e==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CEXPR ^(CEXPR $e+) ^(CBODY $b+))
+    ;
+
+ruleBody
+    : ruleCase
+	| shapeOpSeq
+	;
+
+stacked
+    : push+=SPUSH pop+=SPOP -> ^(STACKED $push $pop)
+    | push+=SPUSH s+=ruleBody pop+=SPOP -> ^(STACKED $push $s $pop)
+	;
+
+shapeOpSeq
+	: (s+=shapeOp)+ -> ^(OPSEQ $s+)
+	;
+
+shapeOp
+    :	NIL
+    |   SPLIT^      '('! selOrId (','! selOrId ( ','! numericExpression )? )? ')' splitExpression
+    |   SPLIT_AREA^ '('! selOrId (','! selOrId )? ')' splitExpression
+    |   COMP^       '('! selOrId ')'! '{'! compListOrSetback '}'!
+    |   SETB^       '('! numericExpression ( ','! numericExpression )? ')' '{'! compListOrSetback '}'!
+    |   SHPL^       '('! numericExpression ','! numericExpression ')'!                                                            '{'! shapeLUOOrIRectList '}'!
+    |   SHPU^       '('! numericExpression ','! numericExpression ','! numericExpression ')'!                                     '{'! shapeLUOOrIRectList '}'!
+    |   SHPO^       '('! numericExpression ','! numericExpression ','! numericExpression ','! numericExpression ')'!              '{'! shapeLUOOrIRectList '}'!
+    |   IRECT^      '('! selOrId ')'! '{'! shapeLUOOrIRectList '}'!
+    |   SCAT^       '('! selOrId ','! numericExpression ','! selOrId ( ','! selOrId ','! scaleRelativeExpression )? ')'! '{'! shapeOpSeq '}'!
+    |   S_OP^       '('! scaleRelativeExpression ','! scaleRelativeExpression ','! scaleRelativeExpression ')'!
+    |   T_OP^       '('! scaleRelativeExpression ','! scaleRelativeExpression ','! scaleRelativeExpression ')'!
+    |   SP_OP^      '('! numericExpression       ','! selOrId              ','! scaleRelativeOrFloatingExpression ','! scaleRelativeOrFloatingExpression (','! numericExpression)? ')'!
+    |   SP_OP^      '('! numericExpression       ','! selOrId              ','! scaleRelativeOrFloatingExpression ','! scaleRelativeOrFloatingExpression ','! scaleRelativeOrFloatingExpression ','! scaleRelativeOrFloatingExpression (','! numericExpression)? ')'!
+    |   TILEUV^     '('! numericExpression ','! scaleRelativeOrFloatingExpression ','! scaleRelativeOrFloatingExpression ')'!
+    |   SET_OP^     '('! selOrId ','! expression ')'!
+    |   Identifier^ arguments?
+    |   stacked
+	;
+
+selOrId
+    : SEL^ '('! stringExpression ')'!
+    | Identifier
+    ;
+
+splitExpression
+	: '{'! splitList '}'! MULT?
+	;
+
+splitList
+	: shapeSplit ( BAR! splitList )*
+	;
+
+shapeSplit
+	: splitExpression                                        -> ^(COLON ScaleRatio            DEFR splitExpression)
+	| constraintExpression COLON shapeOpSeqOrSplitExpression -> ^(COLON constraintExpression       shapeOpSeqOrSplitExpression)
+	;
+
+shapeOpSeqOrSplitExpression
+	: shapeOpSeq
+	| splitExpression
+	;
+
+compListOrSetback
+    : compSplitOrSetback ( BAR! compListOrSetback )*
+    ;
+
+compSplitOrSetback
+    : numericExpression COLON  shapeOpSeq -> ^(NOTCOMB numericExpression shapeOpSeq)
+    | numericExpression EQUALS shapeOpSeq -> ^(COMBINE numericExpression shapeOpSeq)
+    ;
+
+shapeLUOOrIRectList
+	: shapeLUOOrIRect ( BAR! shapeLUOOrIRect )*
+	;
+
+shapeLUOOrIRect
+	: Identifier COLON  shapeOpSeq -> ^(NOTCOMB Identifier shapeOpSeq)
+    | Identifier EQUALS shapeOpSeq -> ^(COMBINE Identifier shapeOpSeq)
+	;
+
+// EXPRESSIONS
+
+caseExpression
+    : (p+=ProbabilityLiteral COLON b+=expression )+ p+=ELSE COLON b+=expression
+        -> {$p==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CPROB ^(CPROB $p+) ^(CBODY $b+))
+    | (CASE e+=booleanExpression  COLON b+=expression )+ e+=elseToken COLON b+=expression
+        -> {$e==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CEXPR ^(CEXPR $e+) ^(CBODY $b+))
+    ;
+
+caseBooleanExpression
+    : (p+=ProbabilityLiteral COLON b+=booleanExpression )+ p+=ELSE COLON b+=booleanExpression
+        -> {$p==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CPROB ^(CPROB $p+) ^(CBODY $b+))
+    | (CASE e+=booleanExpression  COLON b+=booleanExpression )+ e+=elseToken COLON b+=booleanExpression
+        -> {$e==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CEXPR ^(CEXPR $e+) ^(CBODY $b+))
+    ;
+
+caseNumericExpression
+    : (p+=ProbabilityLiteral COLON b+=numericExpression )+ p+=ELSE COLON b+=numericExpression
+        -> {$p==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CPROB ^(CPROB $p+) ^(CBODY $b+))
+    | (CASE e+=booleanExpression  COLON b+=numericExpression )+ e+=elseToken COLON b+=numericExpression
+        -> {$e==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CEXPR ^(CEXPR $e+) ^(CBODY $b+))
+    ;
+
+caseStringExpression
+    : (p+=ProbabilityLiteral COLON b+=stringExpression )+ p+=ELSE COLON b+=stringExpression
+        -> {$p==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CPROB ^(CPROB $p+) ^(CBODY $b+))
+    | (CASE e+=booleanExpression  COLON b+=stringExpression )+ e+=elseToken COLON b+=stringExpression
+        -> {$e==null}? ^( ERROR )
+        -> {$b==null}? ^( ERROR )
+        -> ^(CEXPR ^(CEXPR $e+) ^(CBODY $b+))
+    ;
+
+expression
+    : caseExpression
+    | booleanExpression
+    ;
+
+
+// BOOLEAN EXPRESSIONS
+
+booleanExpression
+    : conditonalOrExpression
+	;
+
+conditonalOrExpression
+	: conditionalAndExpression ( OR^ conditionalAndExpression )*
+	;
+
+conditionalAndExpression
+    :   equalityExpression ( AND^ equalityExpression )*
+	;
+
+equalityExpression
+    :   relationalExpression ( (EQUAL | NEQUAL)^ relationalExpression )*
+	;
+
+relationalExpression
+    : numericOrStringExpression ( relationalOp^ numericOrStringExpression )?
+    | NOT unaryBooleanExpression -> ^(NOT unaryBooleanExpression)
+    | unaryBooleanExpression
+	;
+
+relationalOp
+	:	(GT | GEQUAL | LT | LEQUAL)
+	;
+
+unaryBooleanExpression
+	: booleanParExpression
+	| BooleanLiteral
+	| functionOrVar
+	;
+
+booleanParExpression
+    : POPEN caseBooleanExpression PCLOSE -> caseBooleanExpression
+	| POPEN booleanExpression PCLOSE -> booleanExpression
+	;
+
+// NUMERIC EXPRESSIONS
+
+numericExpression
+	: additiveExpression
+	;
+
+additiveExpression
+    :   multiplicativeExpression ( ( PLUS^ | MINUS^ ) multiplicativeExpression )*
+	;
+
+multiplicativeExpression
+    : unaryNumericPrefixExpression ( ( MULT^ | DIV^ | MOD^ ) unaryNumericPrefixExpression )*
+	;
+
+stringExpression
+	: stringAdditiveExpression
+	;
+
+stringAdditiveExpression
+    :   unaryStringExpression ( PLUS^ unaryStringExpression )*
+	;
+
+numericOrStringExpression
+	: numericOrStringAdditiveExpression
+	;
+
+numericOrStringAdditiveExpression
+    :   numericOrStringMultiplicativeExpression ( ( PLUS^ | MINUS^ ) numericOrStringMultiplicativeExpression )*
+	;
+
+numericOrStringMultiplicativeExpression
+    : unaryNumericPrefixExpression ( ( MULT^ | DIV^ | MOD^ ) unaryNumericPrefixExpression )*
+    | unaryStringExpression
+    | unaryBooleanExpression
+	;
+
+constraintPrefix
+	: ( ScaleRelative | ScaleFloat )?
+	;
+
+unaryNumericPrefixExpression
+	: PLUS? unaryNumericExpression -> unaryNumericExpression
+	| MINUS unaryNumericExpression -> ^(UMINUS unaryNumericExpression)
+	;
+
+unaryNumericExpression
+    :	numericParExpression
+    |   FloatingPointLiteral
+    |   functionOrVar
+	;
+
+constraintExpression
+	: constraintPrefix numericExpression
+	;
+
+scaleRelativeExpression
+    : numericExpression
+    | ScaleRelative numericExpression -> ^(ScaleRelative numericExpression)
+    ;
+
+scaleFloatingExpression
+    : numericExpression
+    | ScaleFloat numericExpression -> ^(ScaleFloat numericExpression)
+    ;
+
+scaleRelativeOrFloatingExpression
+	: scaleRelativeExpression
+	| scaleFloatingExpression
+	;
+
+numericParExpression
+    : POPEN caseNumericExpression PCLOSE -> caseNumericExpression
+	| POPEN numericExpression PCLOSE -> numericExpression
+	;
+
+stringParExpression
+    : POPEN caseStringExpression PCLOSE -> caseStringExpression
+	| POPEN stringExpression PCLOSE -> stringExpression
+	;
+
+// STRING EXPRESSIONS
+
+unaryStringExpression
+	: stringParExpression
+	| StringLiteral
+	| functionOrVar
+	;
+
+// ANNOTATIONS
+
+annotationArguments
+    :   '('! annotationArgList? ')'!
+    ;
+
+
+// MISC
+
+arguments
+	:	'('! expressionList? ')'!
+	;
+
+
+annotationArgList
+    :   annotationArg (','! annotationArg)*
+    ;
+
+annotationArg
+    :  ( Identifier EQUALS^ ) ? ( expression '-'? '*' ? ( '^' FloatingPointLiteral  ) ?  | '{' ( '-'? FloatingPointLiteral ',')* '-'? FloatingPointLiteral '}' )
+    ;
+
+functionOrVar
+    :   SEL^ '('! stringExpression ')'!
+    |   Identifier^ arguments?
+	;
+
+expressionList
+    :   expression (','! expression)*
+    ;
+
+// LEXER, keep in sync with CGARegion.java:getText(Token token)
+
+EQUALS     : '=';
+RULE_DEFINITION     : '-->';
+POPEN      : '(';
+PCLOSE     : ')';
+SPUSH      : '[';
+SPOP       : ']';
+MULT       : '*';
+DIV        : '/';
+MOD        : '%';
+MINUS      : '-';
+UMINUS     : '\u0000-\u0000';
+PLUS       : '+';
+NOT        : '!';
+AND        : '&&';
+OR         : '||';
+EQUAL      : '==';
+NEQUAL     : '!=';
+GT         : '>';
+GEQUAL     : '>=';
+LT         : '<';
+LEQUAL     : '<=';
+COLON       : ':';
+CPROB      : '\u0000CPROB\u0000';
+CEXPR      : '\u0000CEXPR\u0000';
+CBODY      : '\u0000CBODY\u0000';
+OPSEQ      : '\u0000OPSEQ\u0000';
+DEFR       : '\u0000DEFR\u0000';
+ERROR      : '\u0000ERROR\u0000';
+NOTCOMB    : '\u0000COLON\u0000';
+COMBINE    : '\u0000EQUALS\u0000';
+STACKED    : '\u0000STACKED\u0000';
+ELSE       : 'else';
+CASE       : 'case';
+SPLIT      : 'split';
+SNAP_SPLIT : 'snapSplit';
+SPLIT_AREA : 'splitArea';
+S_OP       : 's';
+SET_OP     : 'set';
+T_OP       : 't';
+SP_OP      : 'setupProjection';
+SEL        : 'sel';
+COMP       : 'comp';
+SCAT       : 'scatter';
+SETB       : 'setback';
+SHPL       : 'shapeL';
+SHPU       : 'shapeU';
+SHPO       : 'shapeO';
+IRECT      : 'innerRectangle';
+TILEUV     : 'tileUV';
+NIL        : 'NIL';
+BAR        : '|';
+IMPORT     : 'import';
+STYLE      : 'style';
+EXTENDS    : 'extends';
+VERSION    : 'version';
+
+fragment
+HexDigit : ('0'..'9'|'a'..'f'|'A'..'F') ;
+
+ScaleFloat    : '~';
+ScaleRelative : '\'';
+ScaleRatio    : '\\';
+
+BooleanLiteral
+	: 'true'
+	| 'false'
+	;
+
+FloatingPointLiteral
+    :   ('0'..'9')+ '.' ('0'..'9')* Exponent?
+    |   '.' ('0'..'9')+ Exponent?
+    |   ('0'..'9')+ Exponent?
+	;
+
+ProbabilityLiteral : FloatingPointLiteral '%' ;
+
+fragment
+Exponent : ('e'|'E') ('+'|'-')? ('0'..'9')+ ;
+
+StringLiteral
+    :  '"' ( EscapeSequence | ~('\\'|'"') )* '"'
+    ;
+
+fragment
+EscapeSequence
+    :   '\\' ('b'|'t'|'n'|'f'|'r'|'\"'|'\''|'\\')
+    |   UnicodeEscape
+    |   OctalEscape
+    ;
+
+fragment
+OctalEscape
+    :   '\\' ('0'..'3') ('0'..'7') ('0'..'7')
+    |   '\\' ('0'..'7') ('0'..'7')
+    |   '\\' ('0'..'7')
+    ;
+
+fragment
+UnicodeEscape
+    :   '\\' 'u' HexDigit HexDigit HexDigit HexDigit
+    ;
+
+Identifier
+    : (Letter (Letter | IDDigit )* '$') ? Letter (Letter | IDDigit | '.' )*
+    ;
+
+Annotation
+    :   '@' Letter (Letter | IDDigit )*
+    ;
+
+fragment
+Letter :  'a'..'z' | 'A'..'Z' | '_' ;
+
+fragment
+IDDigit :  '0'..'9';
+
+WS  :  (' ' | '\t' | '\u000C' | '\n' ) {Skip();} // {$channel=HIDDEN;}
+    ;
+
+SignatureIdentifier
+    : '\r' '\n' SignatureIdentifierWS* (Attr SignatureIdentifierWS+)? (Letter (Letter | IDDigit )* '$') ? Letter (Letter | IDDigit | '.' )*
+    ;
+
+fragment
+SignatureIdentifierWS : ' '|'\t';
+
+fragment
+Attr : 'attr' | 'const';
