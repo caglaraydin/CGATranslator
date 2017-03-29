@@ -32,9 +32,9 @@ namespace CGATranslator
 			CGAParser parser = new CGAParser (tokens);                      // Create parser
 			var result = parser.ruleDefinition ();
 
-			CommonTree tree = (CommonTree)result.Tree;
+			CommonTree Tree = (CommonTree)result.Tree;
 			//Console.WriteLine (tree.ToStringTree ());                     // Print out the tree
-			Preorder (tree, 0);                                             // Print out the tree with TAB GRAPH
+			Preorder (Tree, 0);                                             // Print out the tree with TAB GRAPH
 
 		}
 	}
